@@ -26,7 +26,11 @@ object LaunchManager {
 
     fun scheduleAutoLaunch(context: Context) {
         val appContext = context.applicationContext
+        AppSettings.markPendingLaunch(appContext)
         AppSettings.recordFallbackResult(appContext, AppSettings.FALLBACK_DISABLED)
+        if (!AppSettings.accessibilityAssist(appContext)) {
+            AppSettings.recordAccessibilityResult(appContext, AppSettings.ACCESSIBILITY_DISABLED)
+        }
         handler.postDelayed({
             val result = attemptLaunch(appContext)
             AppSettings.recordLaunchResult(appContext, result)

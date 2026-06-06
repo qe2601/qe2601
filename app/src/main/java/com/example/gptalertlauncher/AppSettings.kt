@@ -2,6 +2,7 @@ package com.example.gptalertlauncher
 
 import android.content.Context
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -9,6 +10,7 @@ object AppSettings {
     private const val PREFS = "gpt_alert_launcher_settings"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_SILENT_AUTO_LAUNCH = "silent_auto_launch"
+    private const val KEY_ACCESSIBILITY_ASSIST = "accessibility_assist"
     private const val KEY_SHOW_FALLBACK_ON_FAILURE = "show_fallback_on_failure"
     private const val KEY_COOLDOWN_SECONDS = "cooldown_seconds"
     private const val KEY_SCREEN_ON_ONLY = "screen_on_only"
@@ -18,13 +20,17 @@ object AppSettings {
     private const val KEY_LAUNCH_DELAY_MS = "launch_delay_ms"
     private const val KEY_RETRY_ENABLED = "retry_enabled"
     private const val KEY_RETRY_DELAY_MS = "retry_delay_ms"
+    private const val KEY_ACCESSIBILITY_TIMEOUT_MS = "accessibility_timeout_ms"
     private const val KEY_LAST_LAUNCH_MS = "last_launch_ms"
+    private const val KEY_PENDING_LAUNCH_MS = "pending_launch_ms"
 
     private const val KEY_LAST_DETECTED_MS = "diag_last_detected_ms"
     private const val KEY_LAST_ATTEMPT_MS = "diag_last_attempt_ms"
     private const val KEY_LAST_RESULT = "diag_last_result"
     private const val KEY_LAST_RETRY_MS = "diag_last_retry_ms"
     private const val KEY_LAST_RETRY_RESULT = "diag_last_retry_result"
+    private const val KEY_LAST_ACCESSIBILITY_ATTEMPT_MS = "diag_last_accessibility_attempt_ms"
+    private const val KEY_LAST_ACCESSIBILITY_RESULT = "diag_last_accessibility_result"
     private const val KEY_LAST_FALLBACK_RESULT = "diag_last_fallback_result"
 
     const val CHATGPT_PACKAGE = "com.openai.chatgpt"
@@ -33,6 +39,7 @@ object AppSettings {
     const val DEFAULT_QUIET_END = "07:00"
     const val DEFAULT_LAUNCH_DELAY_MS = 300
     const val DEFAULT_RETRY_DELAY_MS = 700
+    const val DEFAULT_ACCESSIBILITY_TIMEOUT_MS = 5000
 
     const val RESULT_NOT_ATTEMPTED = "not attempted"
     const val RESULT_ATTEMPTED = "attempted"
@@ -43,6 +50,14 @@ object AppSettings {
     const val RESULT_SKIPPED_QUIET_HOURS = "skipped: quiet hours"
     const val RESULT_SKIPPED_SCREEN_OFF = "skipped: screen off"
     const val RESULT_SKIPPED_DEVICE_LOCKED = "skipped: device locked"
+
+    const val ACCESSIBILITY_DISABLED = "accessibility disabled"
+    const val ACCESSIBILITY_ATTEMPTED = "accessibility attempted"
+    const val ACCESSIBILITY_SKIPPED_NO_PENDING = "skipped: no pending launch"
+    const val ACCESSIBILITY_SKIPPED_LOCKED = "skipped: accessibility device locked"
+    const val ACCESSIBILITY_SKIPPED_UNSAFE_PACKAGE = "skipped: unsafe package"
+    const val ACCESSIBILITY_SKIPPED_TIMEOUT = "skipped: timeout"
+    const val ACCESSIBILITY_SUCCESS_FOREGROUND = "success: ChatGPT foreground detected"
 
     const val FALLBACK_DISABLED = "disabled"
     const val FALLBACK_SHOWN = "shown"
@@ -55,6 +70,9 @@ object AppSettings {
 
     fun silentAutoLaunch(context: Context): Boolean = prefs(context).getBoolean(KEY_SILENT_AUTO_LAUNCH, true)
     fun setSilentAutoLaunch(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_SILENT_AUTO_LAUNCH, value).apply()
+
+    fun accessibilityAssist(context: Context): Boolean = prefs(context).getBoolean(KEY_ACCESSIBILITY_ASSIST, false)
+    fun setAccessibilityAssist(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_ACCESSIBILITY_ASSIST, value).apply()
 
     fun showFallbackOnFailure(context: Context): Boolean = prefs(context).getBoolean(KEY_SHOW_FALLBACK_ON_FAILURE, false)
     fun setShowFallbackOnFailure(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_SHOW_FALLBACK_ON_FAILURE, value).apply()
@@ -83,8 +101,20 @@ object AppSettings {
     fun retryDelayMs(context: Context): Int = prefs(context).getInt(KEY_RETRY_DELAY_MS, DEFAULT_RETRY_DELAY_MS).coerceIn(100, 5000)
     fun setRetryDelayMs(context: Context, value: Int) = prefs(context).edit().putInt(KEY_RETRY_DELAY_MS, value.coerceIn(100, 5000)).apply()
 
+    fun accessibilityTimeoutMs(context: Context): Int = prefs(context).getInt(KEY_ACCESSIBILITY_TIMEOUT_MS, DEFAULT_ACCESSIBILITY_TIMEOUT_MS).coerceIn(1000, 15000)
+    fun setAccessibilityTimeoutMs(context: Context, value: Int) = prefs(context).edit().putInt(KEY_ACCESSIBILITY_TIMEOUT_MS, value.coerceIn(1000, 15000)).apply()
+
     fun lastLaunchMs(context: Context): Long = prefs(context).getLong(KEY_LAST_LAUNCH_MS, 0L)
     fun setLastLaunchMs(context: Context, value: Long) = prefs(context).edit().putLong(KEY_LAST_LAUNCH_MS, value).apply()
+
+    fun pendingLaunchMs(context: Context): Long = prefs(context).getLong(KEY_PENDING_LAUNCH_MS, 0L)
+    fun markPendingLaunch(context: Context, value: Long = System.currentTimeMillis()) = prefs(context).edit().putLong(KEY_PENDING_LAUNCH_MS, value).apply()
+    fun clearPendingLaunch(context: Context) = prefs(context).edit().putLong(KEY_PENDING_LAUNCH_MS, 0L).apply()
+
+    fun isPendingLaunchActive(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val pendingMs = pendingLaunchMs(context)
+        return pendingMs > 0L && nowMs - pendingMs <= accessibilityTimeoutMs(context)
+    }
 
     fun isInCooldown(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         return nowMs - lastLaunchMs(context) < cooldownSeconds(context) * 1000L
@@ -94,68 +124,115 @@ object AppSettings {
         val start = parseMinutes(quietStart(context)) ?: return false
         val end = parseMinutes(quietEnd(context)) ?: return false
         if (start == end) return false
-        return if (start < end) nowMinutes in start until end else nowMinutes >= start || nowMinutes < end
+        return if (start < end) {
+            nowMinutes in start until end
+        } else {
+            nowMinutes >= start || nowMinutes < end
+        }
     }
 
-    fun recordDetected(context: Context, value: Long = System.currentTimeMillis()) = prefs(context).edit().putLong(KEY_LAST_DETECTED_MS, value).apply()
-    fun recordLaunchResult(context: Context, result: String, value: Long = System.currentTimeMillis()) = prefs(context).edit().putLong(KEY_LAST_ATTEMPT_MS, value).putString(KEY_LAST_RESULT, result).apply()
-    fun recordRetryResult(context: Context, result: String, value: Long = System.currentTimeMillis()) = prefs(context).edit().putLong(KEY_LAST_RETRY_MS, value).putString(KEY_LAST_RETRY_RESULT, result).apply()
-    fun recordFallbackResult(context: Context, result: String) = prefs(context).edit().putString(KEY_LAST_FALLBACK_RESULT, result).apply()
+    fun recordDetected(context: Context, timeMs: Long = System.currentTimeMillis()) {
+        prefs(context).edit().putLong(KEY_LAST_DETECTED_MS, timeMs).apply()
+    }
 
-    fun clearDiagnostics(context: Context) = prefs(context).edit()
-        .remove(KEY_LAST_DETECTED_MS)
-        .remove(KEY_LAST_ATTEMPT_MS)
-        .remove(KEY_LAST_RESULT)
-        .remove(KEY_LAST_RETRY_MS)
-        .remove(KEY_LAST_RETRY_RESULT)
-        .remove(KEY_LAST_FALLBACK_RESULT)
-        .apply()
+    fun recordLaunchResult(context: Context, result: String, timeMs: Long = System.currentTimeMillis()) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_ATTEMPT_MS, timeMs)
+            .putString(KEY_LAST_RESULT, result)
+            .apply()
+    }
+
+    fun recordRetryResult(context: Context, result: String, timeMs: Long = System.currentTimeMillis()) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_RETRY_MS, timeMs)
+            .putString(KEY_LAST_RETRY_RESULT, result)
+            .apply()
+    }
+
+    fun recordAccessibilityResult(context: Context, result: String, timeMs: Long = System.currentTimeMillis()) {
+        prefs(context).edit()
+            .putLong(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS, timeMs)
+            .putString(KEY_LAST_ACCESSIBILITY_RESULT, result)
+            .apply()
+    }
+
+    fun recordFallbackResult(context: Context, result: String) {
+        prefs(context).edit().putString(KEY_LAST_FALLBACK_RESULT, result).apply()
+    }
+
+    fun clearDiagnostics(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_LAST_DETECTED_MS)
+            .remove(KEY_LAST_ATTEMPT_MS)
+            .remove(KEY_LAST_RESULT)
+            .remove(KEY_LAST_RETRY_MS)
+            .remove(KEY_LAST_RETRY_RESULT)
+            .remove(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS)
+            .remove(KEY_LAST_ACCESSIBILITY_RESULT)
+            .remove(KEY_LAST_FALLBACK_RESULT)
+            .remove(KEY_PENDING_LAUNCH_MS)
+            .apply()
+    }
 
     fun diagnosticsSnapshot(context: Context): DiagnosticsSnapshot {
-        val p = prefs(context)
+        val preferences = prefs(context)
         return DiagnosticsSnapshot(
-            lastDetected = formatMs(p.getLong(KEY_LAST_DETECTED_MS, 0L)),
-            lastAttempt = formatMs(p.getLong(KEY_LAST_ATTEMPT_MS, 0L)),
-            lastResult = p.getString(KEY_LAST_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
-            lastRetryAttempt = formatMs(p.getLong(KEY_LAST_RETRY_MS, 0L)),
-            lastRetryResult = p.getString(KEY_LAST_RETRY_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
-            lastFallbackResult = p.getString(KEY_LAST_FALLBACK_RESULT, FALLBACK_DISABLED) ?: FALLBACK_DISABLED,
+            lastDetected = formatMs(preferences.getLong(KEY_LAST_DETECTED_MS, 0L)),
+            lastAttempt = formatMs(preferences.getLong(KEY_LAST_ATTEMPT_MS, 0L)),
+            lastResult = preferences.getString(KEY_LAST_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
+            lastRetryAttempt = formatMs(preferences.getLong(KEY_LAST_RETRY_MS, 0L)),
+            lastRetryResult = preferences.getString(KEY_LAST_RETRY_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
+            lastAccessibilityAttempt = formatMs(preferences.getLong(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS, 0L)),
+            lastAccessibilityResult = preferences.getString(KEY_LAST_ACCESSIBILITY_RESULT, ACCESSIBILITY_DISABLED) ?: ACCESSIBILITY_DISABLED,
+            lastFallbackResult = preferences.getString(KEY_LAST_FALLBACK_RESULT, FALLBACK_DISABLED) ?: FALLBACK_DISABLED,
         )
     }
 
-    fun settingsSnapshot(context: Context): String = listOf(
-        "자동 실행 사용: ${onOff(isEnabled(context))}",
-        "무음 자동 실행 모드: ${onOff(silentAutoLaunch(context))}",
-        "실패 시 별도 알림 표시: ${onOff(showFallbackOnFailure(context))}",
-        "쿨다운(초): ${cooldownSeconds(context)}",
-        "화면 켜짐 상태에서만 실행: ${onOff(screenOnOnly(context))}",
-        "잠금 해제 상태에서만 실행: ${onOff(unlockedOnly(context))}",
-        "조용한 시간 시작: ${quietStart(context)}",
-        "조용한 시간 종료: ${quietEnd(context)}",
-        "실행 지연(ms): ${launchDelayMs(context)}",
-        "재시도 사용: ${onOff(retryEnabled(context))}",
-        "재시도 지연(ms): ${retryDelayMs(context)}",
-    ).joinToString("\n")
+    fun settingsSnapshot(context: Context): String {
+        return listOf(
+            "자동 실행 사용: ${onOff(isEnabled(context))}",
+            "무음 자동 실행 모드: ${onOff(silentAutoLaunch(context))}",
+            "접근성 보조 모드: ${onOff(accessibilityAssist(context))}",
+            "실패 시 별도 알림 표시: ${onOff(showFallbackOnFailure(context))}",
+            "화면 켜짐 상태에서만 실행: ${onOff(screenOnOnly(context))}",
+            "잠금 해제 상태에서만 실행: ${onOff(unlockedOnly(context))}",
+            "재시도 사용: ${onOff(retryEnabled(context))}",
+            "쿨다운(초): ${cooldownSeconds(context)}",
+            "실행 지연(ms): ${launchDelayMs(context)}",
+            "재시도 지연(ms): ${retryDelayMs(context)}",
+            "접근성 보조 제한 시간(ms): ${accessibilityTimeoutMs(context)}",
+            "조용한 시간: ${quietStart(context)} ~ ${quietEnd(context)}",
+        ).joinToString("\n")
+    }
 
-    fun koreanResult(value: String): String = when {
-        value == RESULT_NOT_ATTEMPTED -> "시도 안 함"
-        value == RESULT_ATTEMPTED -> "시도함"
-        value == RESULT_FAILED_NOT_INSTALLED -> "실패: ChatGPT 미설치"
-        value.startsWith(RESULT_FAILED_EXCEPTION_PREFIX) -> "실패: 예외 ${value.removePrefix(RESULT_FAILED_EXCEPTION_PREFIX)}"
-        value == RESULT_SKIPPED_DISABLED -> "건너뜀: 자동 실행 꺼짐"
-        value == RESULT_SKIPPED_COOLDOWN -> "건너뜀: 쿨다운"
-        value == RESULT_SKIPPED_QUIET_HOURS -> "건너뜀: 조용한 시간"
-        value == RESULT_SKIPPED_SCREEN_OFF -> "건너뜀: 화면 꺼짐"
-        value == RESULT_SKIPPED_DEVICE_LOCKED -> "건너뜀: 기기 잠김"
-        value == FALLBACK_DISABLED -> "꺼짐"
-        value == FALLBACK_SHOWN -> "표시됨"
-        value == FALLBACK_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
-        else -> value
+    fun koreanResult(result: String): String {
+        return when {
+            result == RESULT_NOT_ATTEMPTED -> "아직 없음"
+            result == RESULT_ATTEMPTED -> "실행 시도함"
+            result == RESULT_FAILED_NOT_INSTALLED -> "실패: ChatGPT 미설치"
+            result.startsWith(RESULT_FAILED_EXCEPTION_PREFIX) -> "실패: 예외 발생"
+            result == RESULT_SKIPPED_DISABLED -> "건너뜀: 자동 실행 꺼짐"
+            result == RESULT_SKIPPED_COOLDOWN -> "건너뜀: 쿨다운 중"
+            result == RESULT_SKIPPED_QUIET_HOURS -> "건너뜀: 조용한 시간"
+            result == RESULT_SKIPPED_SCREEN_OFF -> "건너뜀: 화면 꺼짐"
+            result == RESULT_SKIPPED_DEVICE_LOCKED -> "건너뜀: 기기 잠김"
+            result == ACCESSIBILITY_DISABLED -> "접근성 보조 꺼짐"
+            result == ACCESSIBILITY_ATTEMPTED -> "접근성 보조 시도함"
+            result == ACCESSIBILITY_SKIPPED_NO_PENDING -> "건너뜀: 대기 중인 실행 요청 없음"
+            result == ACCESSIBILITY_SKIPPED_LOCKED -> "건너뜀: 기기 잠김"
+            result == ACCESSIBILITY_SKIPPED_UNSAFE_PACKAGE -> "건너뜀: 안전하지 않은 앱"
+            result == ACCESSIBILITY_SKIPPED_TIMEOUT -> "건너뜀: 제한 시간 초과"
+            result == ACCESSIBILITY_SUCCESS_FOREGROUND -> "성공: ChatGPT 전면 감지"
+            result == FALLBACK_DISABLED -> "별도 알림 꺼짐"
+            result == FALLBACK_SHOWN -> "별도 알림 표시됨"
+            result == FALLBACK_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
+            else -> "실패: 예외 발생"
+        }
     }
 
     private fun sanitizeTime(value: String, fallback: String): String {
         val minutes = parseMinutes(value.trim()) ?: return fallback
-        return "%02d:%02d".format(minutes / 60, minutes % 60)
+        return "%02d:%02d".format(Locale.US, minutes / 60, minutes % 60)
     }
 
     private fun parseMinutes(value: String): Int? {
@@ -168,8 +245,8 @@ object AppSettings {
     }
 
     private fun currentMinutes(): Int {
-        val calendar = java.util.Calendar.getInstance()
-        return calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
+        val calendar = Calendar.getInstance()
+        return calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
     }
 
     private fun formatMs(value: Long): String = if (value <= 0L) "없음" else TIME_FORMAT.format(Date(value))
@@ -183,6 +260,8 @@ object AppSettings {
         val lastResult: String,
         val lastRetryAttempt: String,
         val lastRetryResult: String,
+        val lastAccessibilityAttempt: String,
+        val lastAccessibilityResult: String,
         val lastFallbackResult: String,
     )
 }

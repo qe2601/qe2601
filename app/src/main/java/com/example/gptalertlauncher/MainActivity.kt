@@ -2,6 +2,7 @@ package com.example.gptalertlauncher
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -28,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var cooldownEdit: EditText
     private lateinit var launchDelayEdit: EditText
     private lateinit var retryDelayEdit: EditText
+    private lateinit var accessibilityTimeoutEdit: EditText
     private lateinit var quietStartEdit: EditText
     private lateinit var quietEndEdit: EditText
 
@@ -48,7 +50,7 @@ class MainActivity : Activity() {
         }
         val scrollView = ScrollView(this).apply { addView(root) }
 
-        root.addView(title("GPT 알림 자동 실행"))
+        root.addView(title("GPT 알림 자동 실행 v2"))
         root.addView(body("ChatGPT 알림이 오면 가능한 범위에서 ChatGPT 앱을 자동으로 열어 봅니다. Android/Samsung One UI 정책 때문에 자동 전환이 항상 보장되지는 않습니다."))
         root.addView(body("이 앱은 ChatGPT 앱의 알림을 감지하기 위해 알림 접근 권한을 요청합니다. 알림은 기기 안에서만 패키지명으로 필터링하며, 알림 내용은 외부로 전송하지 않습니다."))
 
@@ -69,6 +71,16 @@ class MainActivity : Activity() {
             AppSettings.setShowFallbackOnFailure(this, checked)
             refreshAll()
         })
+
+        root.addView(section("접근성 보조 설정"))
+        root.addView(body("접근성 보조 모드는 자동 전환 성공률을 높이기 위한 선택 기능입니다. 이 앱은 화면 텍스트를 수집하거나 외부로 전송하지 않으며, 금융/결제/비밀번호/OTP 화면 자동조작을 하지 않습니다."))
+        root.addView(switchRow("접근성 보조 모드", AppSettings.accessibilityAssist(this)) { _, checked ->
+            AppSettings.setAccessibilityAssist(this, checked)
+            AppSettings.recordAccessibilityResult(this, if (checked) AppSettings.ACCESSIBILITY_SKIPPED_NO_PENDING else AppSettings.ACCESSIBILITY_DISABLED)
+            refreshAll()
+        })
+
+        root.addView(section("자동 실행 세부 설정"))
         root.addView(switchRow("화면 켜짐 상태에서만 실행", AppSettings.screenOnOnly(this)) { _, checked ->
             AppSettings.setScreenOnOnly(this, checked)
             refreshAll()
@@ -81,11 +93,10 @@ class MainActivity : Activity() {
             AppSettings.setRetryEnabled(this, checked)
             refreshAll()
         })
-
-        root.addView(section("자동 실행 세부 설정"))
         cooldownEdit = editRow(root, "쿨다운(초)", AppSettings.cooldownSeconds(this).toString(), InputType.TYPE_CLASS_NUMBER)
         launchDelayEdit = editRow(root, "실행 지연(ms)", AppSettings.launchDelayMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
         retryDelayEdit = editRow(root, "재시도 지연(ms)", AppSettings.retryDelayMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
+        accessibilityTimeoutEdit = editRow(root, "접근성 보조 제한 시간(ms)", AppSettings.accessibilityTimeoutMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
         quietStartEdit = editRow(root, "조용한 시간 시작", AppSettings.quietStart(this), InputType.TYPE_CLASS_DATETIME)
         quietEndEdit = editRow(root, "조용한 시간 종료", AppSettings.quietEnd(this), InputType.TYPE_CLASS_DATETIME)
         root.addView(button("설정 저장") { saveSettings() })
@@ -105,6 +116,13 @@ class MainActivity : Activity() {
             Toast.makeText(this, "재시도 결과: ${AppSettings.koreanResult(retry)}", Toast.LENGTH_SHORT).show()
             refreshAll()
         })
+        root.addView(button("접근성 보조 테스트") {
+            AppSettings.markPendingLaunch(this)
+            val result = LaunchManager.attemptLaunch(this)
+            AppSettings.recordAccessibilityResult(this, if (result == AppSettings.RESULT_ATTEMPTED) AppSettings.ACCESSIBILITY_ATTEMPTED else result)
+            Toast.makeText(this, AppSettings.koreanResult(if (result == AppSettings.RESULT_ATTEMPTED) AppSettings.ACCESSIBILITY_ATTEMPTED else result), Toast.LENGTH_SHORT).show()
+            refreshAll()
+        })
         root.addView(button("별도 알림 테스트") {
             val result = LaunchManager.showFallbackNotification(this)
             AppSettings.recordFallbackResult(this, result)
@@ -118,18 +136,13 @@ class MainActivity : Activity() {
         })
 
         root.addView(section("권한/설정 바로가기"))
-        root.addView(button("알림 접근 권한 설정 열기") {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        })
+        root.addView(button("알림 접근 권한 설정 열기") { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) })
+        root.addView(button("접근성 설정 열기") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
         root.addView(button("이 앱 알림 설정 열기") { openOwnNotificationSettings() })
-        root.addView(button("배터리 최적화 설정 열기") {
-            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-        })
+        root.addView(button("배터리 최적화 설정 열기") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) })
         root.addView(button("ChatGPT 앱 정보 열기") { openChatGptAppInfo() })
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            root.addView(button("알림 표시 권한 요청") {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 200)
-            })
+            root.addView(button("알림 표시 권한 요청") { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 200) })
         }
 
         diagnosticsContainer = verticalContainer()
@@ -153,6 +166,7 @@ class MainActivity : Activity() {
         statusContainer.removeAllViews()
         statusContainer.addView(statusLine("ChatGPT 설치됨", LaunchManager.isChatGptInstalled(this)))
         statusContainer.addView(statusLine("알림 접근 권한 허용됨", isNotificationListenerEnabled()))
+        statusContainer.addView(statusLine("접근성 보조 권한 허용됨", isAccessibilityServiceEnabled()))
         statusContainer.addView(statusLine("알림 표시 권한 허용됨", hasPostNotificationPermission()))
         statusContainer.addView(statusLine("배터리 최적화 제외됨", isIgnoringBatteryOptimizations()))
     }
@@ -160,13 +174,15 @@ class MainActivity : Activity() {
     private fun refreshDiagnostics() {
         val snapshot = AppSettings.diagnosticsSnapshot(this)
         diagnosticsContainer.removeAllViews()
-        diagnosticsContainer.addView(body("마지막 ChatGPT 알림 감지 시간: ${snapshot.lastDetected}"))
-        diagnosticsContainer.addView(body("마지막 실행 시도 시간: ${snapshot.lastAttempt}"))
+        diagnosticsContainer.addView(body("마지막 ChatGPT 알림 감지: ${snapshot.lastDetected}"))
+        diagnosticsContainer.addView(body("마지막 실행 시도: ${snapshot.lastAttempt}"))
         diagnosticsContainer.addView(body("마지막 실행 결과: ${AppSettings.koreanResult(snapshot.lastResult)}"))
         diagnosticsContainer.addView(body("마지막 재시도 시간: ${snapshot.lastRetryAttempt}"))
         diagnosticsContainer.addView(body("마지막 재시도 결과: ${AppSettings.koreanResult(snapshot.lastRetryResult)}"))
+        diagnosticsContainer.addView(body("마지막 접근성 보조 시도: ${snapshot.lastAccessibilityAttempt}"))
+        diagnosticsContainer.addView(body("마지막 접근성 보조 결과: ${AppSettings.koreanResult(snapshot.lastAccessibilityResult)}"))
         diagnosticsContainer.addView(body("마지막 별도 알림 결과: ${AppSettings.koreanResult(snapshot.lastFallbackResult)}"))
-        diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
+        diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 접근성 보조 ${yesNo(isAccessibilityServiceEnabled())}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
     }
 
     private fun refreshSettingsSummary() {
@@ -178,14 +194,17 @@ class MainActivity : Activity() {
         val cooldown = cooldownEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_COOLDOWN_SECONDS
         val launchDelay = launchDelayEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_LAUNCH_DELAY_MS
         val retryDelay = retryDelayEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_RETRY_DELAY_MS
+        val accessibilityTimeout = accessibilityTimeoutEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_ACCESSIBILITY_TIMEOUT_MS
         AppSettings.setCooldownSeconds(this, cooldown)
         AppSettings.setLaunchDelayMs(this, launchDelay)
         AppSettings.setRetryDelayMs(this, retryDelay)
+        AppSettings.setAccessibilityTimeoutMs(this, accessibilityTimeout)
         AppSettings.setQuietStart(this, quietStartEdit.text.toString())
         AppSettings.setQuietEnd(this, quietEndEdit.text.toString())
         cooldownEdit.setText(AppSettings.cooldownSeconds(this).toString())
         launchDelayEdit.setText(AppSettings.launchDelayMs(this).toString())
         retryDelayEdit.setText(AppSettings.retryDelayMs(this).toString())
+        accessibilityTimeoutEdit.setText(AppSettings.accessibilityTimeoutMs(this).toString())
         quietStartEdit.setText(AppSettings.quietStart(this))
         quietEndEdit.setText(AppSettings.quietEnd(this))
         Toast.makeText(this, "설정을 저장했습니다", Toast.LENGTH_SHORT).show()
@@ -253,6 +272,12 @@ class MainActivity : Activity() {
         return enabled.split(':').any { it.contains(packageName) }
     }
 
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expected = ComponentName(this, GptAccessibilityAssistService::class.java).flattenToString()
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
+        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
+    }
+
     private fun hasPostNotificationPermission(): Boolean {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -265,9 +290,7 @@ class MainActivity : Activity() {
 
     private fun openOwnNotificationSettings() {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            }
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply { putExtra(Settings.EXTRA_APP_PACKAGE, packageName) }
         } else {
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:$packageName") }
         }
