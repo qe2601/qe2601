@@ -8,27 +8,38 @@ import android.service.notification.StatusBarNotification
 class ChatGptNotificationListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName != AppSettings.CHATGPT_PACKAGE) return
-        if (!AppSettings.isEnabled(this)) return
-        if (AppSettings.isQuietNow(this)) return
-        if (AppSettings.isInCooldown(this)) return
-        if (AppSettings.screenOnOnly(this) && !isScreenOn()) return
-        if (AppSettings.unlockedOnly(this) && isDeviceLocked()) return
 
         val now = System.currentTimeMillis()
-        AppSettings.setLastLaunchMs(this, now)
+        AppSettings.recordDetected(this, now)
 
-        if (!ChatGptLauncher.isChatGptInstalled(this)) {
-            ChatGptLauncher.showFallbackNotification(this, "ChatGPT is not installed or is not visible to this app.")
+        if (!AppSettings.isEnabled(this) || !AppSettings.silentAutoLaunch(this)) {
+            AppSettings.recordLaunchResult(this, AppSettings.RESULT_SKIPPED_DISABLED, now)
+            AppSettings.recordFallbackResult(this, AppSettings.FALLBACK_DISABLED)
+            return
+        }
+        if (AppSettings.isInCooldown(this, now)) {
+            AppSettings.recordLaunchResult(this, AppSettings.RESULT_SKIPPED_COOLDOWN, now)
+            AppSettings.recordFallbackResult(this, AppSettings.FALLBACK_DISABLED)
+            return
+        }
+        if (AppSettings.isQuietNow(this)) {
+            AppSettings.recordLaunchResult(this, AppSettings.RESULT_SKIPPED_QUIET_HOURS, now)
+            AppSettings.recordFallbackResult(this, AppSettings.FALLBACK_DISABLED)
+            return
+        }
+        if (AppSettings.screenOnOnly(this) && !isScreenOn()) {
+            AppSettings.recordLaunchResult(this, AppSettings.RESULT_SKIPPED_SCREEN_OFF, now)
+            AppSettings.recordFallbackResult(this, AppSettings.FALLBACK_DISABLED)
+            return
+        }
+        if (AppSettings.unlockedOnly(this) && isDeviceLocked()) {
+            AppSettings.recordLaunchResult(this, AppSettings.RESULT_SKIPPED_DEVICE_LOCKED, now)
+            AppSettings.recordFallbackResult(this, AppSettings.FALLBACK_DISABLED)
             return
         }
 
-        val launched = ChatGptLauncher.launchChatGpt(this)
-        val reason = if (launched) {
-            "Android may block background app launches on some devices."
-        } else {
-            "Automatic launch was not possible."
-        }
-        ChatGptLauncher.showFallbackNotification(this, reason)
+        AppSettings.setLastLaunchMs(this, now)
+        LaunchManager.scheduleAutoLaunch(this)
     }
 
     private fun isScreenOn(): Boolean {
