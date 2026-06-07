@@ -59,6 +59,7 @@ class MainActivity : Activity() {
         root.addView(statusContainer)
 
         root.addView(section("자동 실행 설정"))
+        root.addView(body("기본 전환 예고 방식은 노티바 카운트다운입니다. 예고 알림에는 전환까지 남은 숫자만 표시합니다."))
         root.addView(switchRow("자동 실행 사용", AppSettings.isEnabled(this)) { _, checked ->
             AppSettings.setEnabled(this, checked)
             refreshAll()
@@ -182,6 +183,9 @@ class MainActivity : Activity() {
         diagnosticsContainer.addView(body("마지막 접근성 보조 시도: ${snapshot.lastAccessibilityAttempt}"))
         diagnosticsContainer.addView(body("마지막 접근성 보조 결과: ${AppSettings.koreanResult(snapshot.lastAccessibilityResult)}"))
         diagnosticsContainer.addView(body("마지막 별도 알림 결과: ${AppSettings.koreanResult(snapshot.lastFallbackResult)}"))
+        diagnosticsContainer.addView(body("마지막 전환 예고 방식: ${snapshot.lastPreSwitchWarningMethod}"))
+        diagnosticsContainer.addView(body("마지막 전환 예고 숫자: ${snapshot.lastPreSwitchWarningNumber}"))
+        diagnosticsContainer.addView(body("마지막 전환 예고 결과: ${AppSettings.koreanResult(snapshot.lastPreSwitchWarningResult)}"))
         diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 접근성 보조 ${yesNo(isAccessibilityServiceEnabled())}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
     }
 

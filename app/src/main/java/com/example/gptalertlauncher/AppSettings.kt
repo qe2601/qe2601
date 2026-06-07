@@ -32,6 +32,9 @@ object AppSettings {
     private const val KEY_LAST_ACCESSIBILITY_ATTEMPT_MS = "diag_last_accessibility_attempt_ms"
     private const val KEY_LAST_ACCESSIBILITY_RESULT = "diag_last_accessibility_result"
     private const val KEY_LAST_FALLBACK_RESULT = "diag_last_fallback_result"
+    private const val KEY_LAST_PRE_SWITCH_WARNING_METHOD = "diag_last_pre_switch_warning_method"
+    private const val KEY_LAST_PRE_SWITCH_WARNING_NUMBER = "diag_last_pre_switch_warning_number"
+    private const val KEY_LAST_PRE_SWITCH_WARNING_RESULT = "diag_last_pre_switch_warning_result"
 
     const val CHATGPT_PACKAGE = "com.openai.chatgpt"
     const val DEFAULT_COOLDOWN_SECONDS = 10
@@ -40,6 +43,7 @@ object AppSettings {
     const val DEFAULT_LAUNCH_DELAY_MS = 300
     const val DEFAULT_RETRY_DELAY_MS = 700
     const val DEFAULT_ACCESSIBILITY_TIMEOUT_MS = 5000
+    const val PRE_SWITCH_WARNING_MODE_COUNTDOWN_NOTIFICATION = "노티바 카운트다운"
 
     const val RESULT_NOT_ATTEMPTED = "not attempted"
     const val RESULT_ATTEMPTED = "attempted"
@@ -63,6 +67,13 @@ object AppSettings {
     const val FALLBACK_SHOWN = "shown"
     const val FALLBACK_PERMISSION_MISSING = "skipped: notification permission missing"
 
+    const val PRE_SWITCH_WARNING_NOT_ATTEMPTED = "not attempted"
+    const val PRE_SWITCH_WARNING_SHOWN = "shown"
+    const val PRE_SWITCH_WARNING_CANCELLED_FOR_LAUNCH = "cancelled: launch starting"
+    const val PRE_SWITCH_WARNING_SKIPPED_IMMEDIATE = "skipped: immediate launch"
+    const val PRE_SWITCH_WARNING_PERMISSION_MISSING = "skipped: notification permission missing"
+    const val PRE_SWITCH_WARNING_FAILED = "failed: notification error"
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, true)
@@ -76,6 +87,8 @@ object AppSettings {
 
     fun showFallbackOnFailure(context: Context): Boolean = prefs(context).getBoolean(KEY_SHOW_FALLBACK_ON_FAILURE, false)
     fun setShowFallbackOnFailure(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_SHOW_FALLBACK_ON_FAILURE, value).apply()
+
+    fun preSwitchWarningMode(): String = PRE_SWITCH_WARNING_MODE_COUNTDOWN_NOTIFICATION
 
     fun cooldownSeconds(context: Context): Int = prefs(context).getInt(KEY_COOLDOWN_SECONDS, DEFAULT_COOLDOWN_SECONDS).coerceIn(1, 3600)
     fun setCooldownSeconds(context: Context, value: Int) = prefs(context).edit().putInt(KEY_COOLDOWN_SECONDS, value.coerceIn(1, 3600)).apply()
@@ -160,6 +173,14 @@ object AppSettings {
         prefs(context).edit().putString(KEY_LAST_FALLBACK_RESULT, result).apply()
     }
 
+    fun recordPreSwitchWarning(context: Context, number: String, result: String) {
+        prefs(context).edit()
+            .putString(KEY_LAST_PRE_SWITCH_WARNING_METHOD, preSwitchWarningMode())
+            .putString(KEY_LAST_PRE_SWITCH_WARNING_NUMBER, number)
+            .putString(KEY_LAST_PRE_SWITCH_WARNING_RESULT, result)
+            .apply()
+    }
+
     fun clearDiagnostics(context: Context) {
         prefs(context).edit()
             .remove(KEY_LAST_DETECTED_MS)
@@ -170,6 +191,9 @@ object AppSettings {
             .remove(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS)
             .remove(KEY_LAST_ACCESSIBILITY_RESULT)
             .remove(KEY_LAST_FALLBACK_RESULT)
+            .remove(KEY_LAST_PRE_SWITCH_WARNING_METHOD)
+            .remove(KEY_LAST_PRE_SWITCH_WARNING_NUMBER)
+            .remove(KEY_LAST_PRE_SWITCH_WARNING_RESULT)
             .remove(KEY_PENDING_LAUNCH_MS)
             .apply()
     }
@@ -185,6 +209,9 @@ object AppSettings {
             lastAccessibilityAttempt = formatMs(preferences.getLong(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS, 0L)),
             lastAccessibilityResult = preferences.getString(KEY_LAST_ACCESSIBILITY_RESULT, ACCESSIBILITY_DISABLED) ?: ACCESSIBILITY_DISABLED,
             lastFallbackResult = preferences.getString(KEY_LAST_FALLBACK_RESULT, FALLBACK_DISABLED) ?: FALLBACK_DISABLED,
+            lastPreSwitchWarningMethod = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_METHOD, preSwitchWarningMode()) ?: preSwitchWarningMode(),
+            lastPreSwitchWarningNumber = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_NUMBER, "없음") ?: "없음",
+            lastPreSwitchWarningResult = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_RESULT, PRE_SWITCH_WARNING_NOT_ATTEMPTED) ?: PRE_SWITCH_WARNING_NOT_ATTEMPTED,
         )
     }
 
@@ -193,6 +220,8 @@ object AppSettings {
             "자동 실행 사용: ${onOff(isEnabled(context))}",
             "무음 자동 실행 모드: ${onOff(silentAutoLaunch(context))}",
             "접근성 보조 모드: ${onOff(accessibilityAssist(context))}",
+            "전환 예고 방식: ${preSwitchWarningMode()}",
+            "전환 예고 표시: 전환까지 남은 숫자만 표시",
             "실패 시 별도 알림 표시: ${onOff(showFallbackOnFailure(context))}",
             "화면 켜짐 상태에서만 실행: ${onOff(screenOnOnly(context))}",
             "잠금 해제 상태에서만 실행: ${onOff(unlockedOnly(context))}",
@@ -226,6 +255,12 @@ object AppSettings {
             result == FALLBACK_DISABLED -> "별도 알림 꺼짐"
             result == FALLBACK_SHOWN -> "별도 알림 표시됨"
             result == FALLBACK_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
+            result == PRE_SWITCH_WARNING_NOT_ATTEMPTED -> "아직 없음"
+            result == PRE_SWITCH_WARNING_SHOWN -> "전환 예고 표시됨"
+            result == PRE_SWITCH_WARNING_CANCELLED_FOR_LAUNCH -> "실행 시작으로 예고 취소됨"
+            result == PRE_SWITCH_WARNING_SKIPPED_IMMEDIATE -> "건너뜀: 즉시 전환"
+            result == PRE_SWITCH_WARNING_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
+            result == PRE_SWITCH_WARNING_FAILED -> "실패: 예고 알림 오류"
             else -> "실패: 예외 발생"
         }
     }
@@ -263,5 +298,8 @@ object AppSettings {
         val lastAccessibilityAttempt: String,
         val lastAccessibilityResult: String,
         val lastFallbackResult: String,
+        val lastPreSwitchWarningMethod: String,
+        val lastPreSwitchWarningNumber: String,
+        val lastPreSwitchWarningResult: String,
     )
 }
