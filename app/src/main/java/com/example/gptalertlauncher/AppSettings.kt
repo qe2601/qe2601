@@ -31,6 +31,9 @@ object AppSettings {
     private const val KEY_LAST_RETRY_RESULT = "diag_last_retry_result"
     private const val KEY_LAST_ACCESSIBILITY_ATTEMPT_MS = "diag_last_accessibility_attempt_ms"
     private const val KEY_LAST_ACCESSIBILITY_RESULT = "diag_last_accessibility_result"
+    private const val KEY_ACCESSIBILITY_PERMISSION_STATUS = "diag_accessibility_permission_status"
+    private const val KEY_ACCESSIBILITY_SETTINGS_OPEN_RESULT = "diag_accessibility_settings_open_result"
+    private const val KEY_LAST_ACCESSIBILITY_STATUS_CHECK_MS = "diag_last_accessibility_status_check_ms"
     private const val KEY_LAST_FALLBACK_RESULT = "diag_last_fallback_result"
     private const val KEY_LAST_PRE_SWITCH_WARNING_METHOD = "diag_last_pre_switch_warning_method"
     private const val KEY_LAST_PRE_SWITCH_WARNING_NUMBER = "diag_last_pre_switch_warning_number"
@@ -62,6 +65,10 @@ object AppSettings {
     const val ACCESSIBILITY_SKIPPED_UNSAFE_PACKAGE = "skipped: unsafe package"
     const val ACCESSIBILITY_SKIPPED_TIMEOUT = "skipped: timeout"
     const val ACCESSIBILITY_SUCCESS_FOREGROUND = "success: ChatGPT foreground detected"
+    const val ACCESSIBILITY_PERMISSION_ON = "accessibility permission on"
+    const val ACCESSIBILITY_PERMISSION_OFF = "accessibility permission off"
+    const val ACCESSIBILITY_SETTINGS_OPENED = "accessibility settings opened"
+    const val ACCESSIBILITY_SETTINGS_OPEN_FAILED = "accessibility settings open failed"
 
     const val FALLBACK_DISABLED = "disabled"
     const val FALLBACK_SHOWN = "shown"
@@ -169,6 +176,17 @@ object AppSettings {
             .apply()
     }
 
+    fun recordAccessibilityPermissionStatus(context: Context, enabled: Boolean, timeMs: Long = System.currentTimeMillis()) {
+        prefs(context).edit()
+            .putString(KEY_ACCESSIBILITY_PERMISSION_STATUS, if (enabled) ACCESSIBILITY_PERMISSION_ON else ACCESSIBILITY_PERMISSION_OFF)
+            .putLong(KEY_LAST_ACCESSIBILITY_STATUS_CHECK_MS, timeMs)
+            .apply()
+    }
+
+    fun recordAccessibilitySettingsOpenResult(context: Context, result: String) {
+        prefs(context).edit().putString(KEY_ACCESSIBILITY_SETTINGS_OPEN_RESULT, result).apply()
+    }
+
     fun recordFallbackResult(context: Context, result: String) {
         prefs(context).edit().putString(KEY_LAST_FALLBACK_RESULT, result).apply()
     }
@@ -190,6 +208,9 @@ object AppSettings {
             .remove(KEY_LAST_RETRY_RESULT)
             .remove(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS)
             .remove(KEY_LAST_ACCESSIBILITY_RESULT)
+            .remove(KEY_ACCESSIBILITY_PERMISSION_STATUS)
+            .remove(KEY_ACCESSIBILITY_SETTINGS_OPEN_RESULT)
+            .remove(KEY_LAST_ACCESSIBILITY_STATUS_CHECK_MS)
             .remove(KEY_LAST_FALLBACK_RESULT)
             .remove(KEY_LAST_PRE_SWITCH_WARNING_METHOD)
             .remove(KEY_LAST_PRE_SWITCH_WARNING_NUMBER)
@@ -208,6 +229,9 @@ object AppSettings {
             lastRetryResult = preferences.getString(KEY_LAST_RETRY_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
             lastAccessibilityAttempt = formatMs(preferences.getLong(KEY_LAST_ACCESSIBILITY_ATTEMPT_MS, 0L)),
             lastAccessibilityResult = preferences.getString(KEY_LAST_ACCESSIBILITY_RESULT, ACCESSIBILITY_DISABLED) ?: ACCESSIBILITY_DISABLED,
+            accessibilityPermissionStatus = preferences.getString(KEY_ACCESSIBILITY_PERMISSION_STATUS, ACCESSIBILITY_PERMISSION_OFF) ?: ACCESSIBILITY_PERMISSION_OFF,
+            accessibilitySettingsOpenResult = preferences.getString(KEY_ACCESSIBILITY_SETTINGS_OPEN_RESULT, RESULT_NOT_ATTEMPTED) ?: RESULT_NOT_ATTEMPTED,
+            lastAccessibilityStatusCheck = formatMs(preferences.getLong(KEY_LAST_ACCESSIBILITY_STATUS_CHECK_MS, 0L)),
             lastFallbackResult = preferences.getString(KEY_LAST_FALLBACK_RESULT, FALLBACK_DISABLED) ?: FALLBACK_DISABLED,
             lastPreSwitchWarningMethod = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_METHOD, preSwitchWarningMode()) ?: preSwitchWarningMode(),
             lastPreSwitchWarningNumber = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_NUMBER, "없음") ?: "없음",
@@ -252,6 +276,10 @@ object AppSettings {
             result == ACCESSIBILITY_SKIPPED_UNSAFE_PACKAGE -> "건너뜀: 안전하지 않은 앱"
             result == ACCESSIBILITY_SKIPPED_TIMEOUT -> "건너뜀: 제한 시간 초과"
             result == ACCESSIBILITY_SUCCESS_FOREGROUND -> "성공: ChatGPT 전면 감지"
+            result == ACCESSIBILITY_PERMISSION_ON -> "켜짐"
+            result == ACCESSIBILITY_PERMISSION_OFF -> "꺼짐"
+            result == ACCESSIBILITY_SETTINGS_OPENED -> "설정 화면 열림"
+            result == ACCESSIBILITY_SETTINGS_OPEN_FAILED -> "설정 화면 열기 실패"
             result == FALLBACK_DISABLED -> "별도 알림 꺼짐"
             result == FALLBACK_SHOWN -> "별도 알림 표시됨"
             result == FALLBACK_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
@@ -297,6 +325,9 @@ object AppSettings {
         val lastRetryResult: String,
         val lastAccessibilityAttempt: String,
         val lastAccessibilityResult: String,
+        val accessibilityPermissionStatus: String,
+        val accessibilitySettingsOpenResult: String,
+        val lastAccessibilityStatusCheck: String,
         val lastFallbackResult: String,
         val lastPreSwitchWarningMethod: String,
         val lastPreSwitchWarningNumber: String,
