@@ -17,6 +17,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.CompoundButton
 import android.widget.EditText
+import android.widget.NumberPicker
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -28,10 +29,11 @@ class MainActivity : Activity() {
     private lateinit var accessibilitySetupContainer: LinearLayout
     private lateinit var diagnosticsContainer: LinearLayout
     private lateinit var settingsSummaryContainer: LinearLayout
-    private lateinit var cooldownEdit: EditText
-    private lateinit var launchDelayEdit: EditText
-    private lateinit var retryDelayEdit: EditText
-    private lateinit var accessibilityTimeoutEdit: EditText
+    private lateinit var preSwitchWarningValue: TextView
+    private lateinit var cooldownValue: TextView
+    private lateinit var launchDelayValue: TextView
+    private lateinit var retryDelayValue: TextView
+    private lateinit var accessibilityTimeoutValue: TextView
     private lateinit var quietStartEdit: EditText
     private lateinit var quietEndEdit: EditText
 
@@ -98,13 +100,39 @@ class MainActivity : Activity() {
             AppSettings.setRetryEnabled(this, checked)
             refreshAll()
         })
-        cooldownEdit = editRow(root, "쿨다운(초)", AppSettings.cooldownSeconds(this).toString(), InputType.TYPE_CLASS_NUMBER)
-        launchDelayEdit = editRow(root, "실행 지연(ms)", AppSettings.launchDelayMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
-        retryDelayEdit = editRow(root, "재시도 지연(ms)", AppSettings.retryDelayMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
-        accessibilityTimeoutEdit = editRow(root, "접근성 보조 제한 시간(ms)", AppSettings.accessibilityTimeoutMs(this).toString(), InputType.TYPE_CLASS_NUMBER)
+        preSwitchWarningValue = timingPickerRow(
+            root,
+            "전환 예고 시간",
+            warningOptions(),
+            AppSettings.preSwitchWarningMs(this),
+        ) { AppSettings.setPreSwitchWarningMs(this, it) }
+        cooldownValue = timingPickerRow(
+            root,
+            "쿨다운",
+            cooldownOptions(),
+            AppSettings.cooldownSeconds(this) * 1000,
+        ) { AppSettings.setCooldownSeconds(this, it / 1000) }
+        launchDelayValue = timingPickerRow(
+            root,
+            "실행 지연",
+            launchDelayOptions(),
+            AppSettings.launchDelayMs(this),
+        ) { AppSettings.setLaunchDelayMs(this, it) }
+        retryDelayValue = timingPickerRow(
+            root,
+            "재시도 지연",
+            retryDelayOptions(),
+            AppSettings.retryDelayMs(this),
+        ) { AppSettings.setRetryDelayMs(this, it) }
+        accessibilityTimeoutValue = timingPickerRow(
+            root,
+            "접근성 보조 제한 시간",
+            accessibilityTimeoutOptions(),
+            AppSettings.accessibilityTimeoutMs(this),
+        ) { AppSettings.setAccessibilityTimeoutMs(this, it) }
         quietStartEdit = editRow(root, "조용한 시간 시작", AppSettings.quietStart(this), InputType.TYPE_CLASS_DATETIME)
         quietEndEdit = editRow(root, "조용한 시간 종료", AppSettings.quietEnd(this), InputType.TYPE_CLASS_DATETIME)
-        root.addView(button("설정 저장") { saveSettings() })
+        root.addView(button("조용한 시간 저장") { saveSettings() })
 
         root.addView(section("테스트"))
         root.addView(button("무음 자동 실행 테스트") {
@@ -168,6 +196,7 @@ class MainActivity : Activity() {
         refreshAccessibilitySetup(accessibilityEnabled)
         refreshDiagnostics(accessibilityEnabled)
         refreshSettingsSummary()
+        updateAllTimingLabels()
     }
 
     private fun refreshStatus(accessibilityEnabled: Boolean) {
@@ -182,14 +211,14 @@ class MainActivity : Activity() {
 
     private fun refreshAccessibilitySetup(accessibilityEnabled: Boolean) {
         accessibilitySetupContainer.removeAllViews()
+        accessibilitySetupContainer.addView(body("접근성 제한 해제 안내"))
+        accessibilitySetupContainer.addView(body("Samsung/Android에서 접근성 보조가 제한되어 있으면, 먼저 이 앱의 애플리케이션 정보 화면에서 제한된 설정 허용을 켠 뒤 접근성 보조를 다시 켜야 합니다."))
         accessibilitySetupContainer.addView(body("접근성 보조 권한: ${onOff(accessibilityEnabled)}"))
+        accessibilitySetupContainer.addView(body(if (accessibilityEnabled) "접근성 보조 준비 완료" else "접근성 보조가 제한되어 있으면 애플리케이션 정보에서 제한된 설정 허용을 먼저 켜세요."))
         accessibilitySetupContainer.addView(body("앱 내 접근성 보조 모드: ${onOff(AppSettings.accessibilityAssist(this))}"))
-        accessibilitySetupContainer.addView(body(if (accessibilityEnabled) "접근성 보조가 켜져 있습니다." else "접근성 보조가 꺼져 있습니다."))
-        accessibilitySetupContainer.addView(body("접근성 보조를 켜려면 Android 설정 화면에서 ‘GPT 알림 접근성 보조’를 선택한 뒤 사용 중으로 바꿔 주세요."))
-        accessibilitySetupContainer.addView(body("Samsung One UI에서는 접근성 > 설치된 앱 > GPT 알림 접근성 보조에서 켤 수 있습니다."))
+        accessibilitySetupContainer.addView(button("이 앱 애플리케이션 정보 열기") { openThisAppInfo() })
         accessibilitySetupContainer.addView(button("접근성 보조 설정 열기") { openAccessibilityAssistSettings() })
         accessibilitySetupContainer.addView(button("접근성 보조 상태 다시 확인") { refreshAll() })
-        accessibilitySetupContainer.addView(button("접근성 보조 사용 방법 보기") { showAccessibilityAssistGuide() })
     }
 
     private fun firstRunAccessibilityCard(accessibilityEnabled: Boolean): View {
@@ -231,6 +260,7 @@ class MainActivity : Activity() {
         diagnosticsContainer.addView(body("마지막 전환 예고 방식: ${snapshot.lastPreSwitchWarningMethod}"))
         diagnosticsContainer.addView(body("마지막 전환 예고 숫자: ${snapshot.lastPreSwitchWarningNumber}"))
         diagnosticsContainer.addView(body("마지막 전환 예고 결과: ${AppSettings.koreanResult(snapshot.lastPreSwitchWarningResult)}"))
+        diagnosticsContainer.addView(body("마지막 전환 예고 생략 사유: ${AppSettings.koreanResult(snapshot.lastPreSwitchWarningSkipReason)}"))
         diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 접근성 보조 ${yesNo(accessibilityEnabled)}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
     }
 
@@ -240,20 +270,8 @@ class MainActivity : Activity() {
     }
 
     private fun saveSettings() {
-        val cooldown = cooldownEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_COOLDOWN_SECONDS
-        val launchDelay = launchDelayEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_LAUNCH_DELAY_MS
-        val retryDelay = retryDelayEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_RETRY_DELAY_MS
-        val accessibilityTimeout = accessibilityTimeoutEdit.text.toString().toIntOrNull() ?: AppSettings.DEFAULT_ACCESSIBILITY_TIMEOUT_MS
-        AppSettings.setCooldownSeconds(this, cooldown)
-        AppSettings.setLaunchDelayMs(this, launchDelay)
-        AppSettings.setRetryDelayMs(this, retryDelay)
-        AppSettings.setAccessibilityTimeoutMs(this, accessibilityTimeout)
         AppSettings.setQuietStart(this, quietStartEdit.text.toString())
         AppSettings.setQuietEnd(this, quietEndEdit.text.toString())
-        cooldownEdit.setText(AppSettings.cooldownSeconds(this).toString())
-        launchDelayEdit.setText(AppSettings.launchDelayMs(this).toString())
-        retryDelayEdit.setText(AppSettings.retryDelayMs(this).toString())
-        accessibilityTimeoutEdit.setText(AppSettings.accessibilityTimeoutMs(this).toString())
         quietStartEdit.setText(AppSettings.quietStart(this))
         quietEndEdit.setText(AppSettings.quietEnd(this))
         Toast.makeText(this, "설정을 저장했습니다", Toast.LENGTH_SHORT).show()
@@ -304,6 +322,120 @@ class MainActivity : Activity() {
             root.addView(this)
         }
     }
+
+    private fun timingPickerRow(
+        root: LinearLayout,
+        label: String,
+        options: List<TimingOption>,
+        currentMs: Int,
+        onApply: (Int) -> Unit,
+    ): TextView {
+        val row = Button(this).apply {
+            textSize = 17f
+            minHeight = 72
+            isAllCaps = false
+        }
+        fun updateLabel() {
+            row.text = "$label\n${displayForValue(options, currentMsForLabel(label))}"
+        }
+        row.setOnClickListener {
+            val values = options.map { option -> option.label }.toTypedArray()
+            val currentIndex = options.indexOfFirst { option -> option.valueMs == currentMsForLabel(label) }.coerceAtLeast(0)
+            val picker = NumberPicker(this).apply {
+                minValue = 0
+                maxValue = values.lastIndex
+                displayedValues = values
+                value = currentIndex
+                wrapSelectorWheel = false
+            }
+            AlertDialog.Builder(this)
+                .setTitle("값을 선택하세요")
+                .setView(picker)
+                .setNegativeButton("취소", null)
+                .setPositiveButton("적용") { _, _ ->
+                    val selected = options[picker.value]
+                    onApply(selected.valueMs)
+                    updateAllTimingLabels()
+                    refreshAll()
+                }
+                .show()
+        }
+        root.addView(row)
+        updateLabel()
+        return row
+    }
+
+    private fun updateAllTimingLabels() {
+        preSwitchWarningValue.text = "전환 예고 시간\n${displayForValue(warningOptions(), AppSettings.preSwitchWarningMs(this))}"
+        cooldownValue.text = "쿨다운\n${displayForValue(cooldownOptions(), AppSettings.cooldownSeconds(this) * 1000)}"
+        launchDelayValue.text = "실행 지연\n${displayForValue(launchDelayOptions(), AppSettings.launchDelayMs(this))}"
+        retryDelayValue.text = "재시도 지연\n${displayForValue(retryDelayOptions(), AppSettings.retryDelayMs(this))}"
+        accessibilityTimeoutValue.text = "접근성 보조 제한 시간\n${displayForValue(accessibilityTimeoutOptions(), AppSettings.accessibilityTimeoutMs(this))}"
+    }
+
+    private fun currentMsForLabel(label: String): Int = when (label) {
+        "전환 예고 시간" -> AppSettings.preSwitchWarningMs(this)
+        "쿨다운" -> AppSettings.cooldownSeconds(this) * 1000
+        "실행 지연" -> AppSettings.launchDelayMs(this)
+        "재시도 지연" -> AppSettings.retryDelayMs(this)
+        "접근성 보조 제한 시간" -> AppSettings.accessibilityTimeoutMs(this)
+        else -> 0
+    }
+
+    private fun displayForValue(options: List<TimingOption>, valueMs: Int): String {
+        return options.firstOrNull { it.valueMs == valueMs }?.label ?: formatDuration(valueMs)
+    }
+
+    private fun formatDuration(valueMs: Int): String {
+        return if (valueMs == 0) "즉시" else if (valueMs % 1000 == 0) "${valueMs / 1000}초" else String.format(java.util.Locale.KOREA, "%.1f초", valueMs / 1000.0)
+    }
+
+    private fun warningOptions() = listOf(
+        TimingOption("즉시", 0),
+        TimingOption("0.5초", 500),
+        TimingOption("1초", 1000),
+        TimingOption("1.5초", 1500),
+        TimingOption("2초", 2000),
+        TimingOption("3초", 3000),
+        TimingOption("5초", 5000),
+    )
+
+    private fun cooldownOptions() = listOf(
+        TimingOption("1초", 1000),
+        TimingOption("3초", 3000),
+        TimingOption("5초", 5000),
+        TimingOption("10초", 10000),
+        TimingOption("30초", 30000),
+        TimingOption("60초", 60000),
+    )
+
+    private fun launchDelayOptions() = listOf(
+        TimingOption("즉시", 0),
+        TimingOption("0.3초", 300),
+        TimingOption("0.5초", 500),
+        TimingOption("1초", 1000),
+        TimingOption("1.5초", 1500),
+        TimingOption("2초", 2000),
+    )
+
+    private fun retryDelayOptions() = listOf(
+        TimingOption("0.3초", 300),
+        TimingOption("0.5초", 500),
+        TimingOption("0.7초", 700),
+        TimingOption("1초", 1000),
+        TimingOption("1.5초", 1500),
+        TimingOption("2초", 2000),
+    )
+
+    private fun accessibilityTimeoutOptions() = listOf(
+        TimingOption("3초", 3000),
+        TimingOption("5초", 5000),
+        TimingOption("8초", 8000),
+        TimingOption("10초", 10000),
+        TimingOption("15초", 15000),
+    )
+
+    private data class TimingOption(val label: String, val valueMs: Int)
 
     private fun button(label: String, onClick: () -> Unit): Button {
         return Button(this).apply {
@@ -363,6 +495,12 @@ class MainActivity : Activity() {
             .setMessage("접근성 보조를 켜려면 Android 설정 화면에서 ‘GPT 알림 접근성 보조’를 선택한 뒤 사용 중으로 바꿔 주세요.\n\nSamsung One UI에서는 접근성 > 설치된 앱 > GPT 알림 접근성 보조에서 켤 수 있습니다.")
             .setPositiveButton("확인", null)
             .show()
+    }
+
+    private fun openThisAppInfo() {
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+        })
     }
 
     private fun openOwnNotificationSettings() {

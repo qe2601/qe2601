@@ -17,6 +17,7 @@ object AppSettings {
     private const val KEY_UNLOCKED_ONLY = "unlocked_only"
     private const val KEY_QUIET_START = "quiet_start"
     private const val KEY_QUIET_END = "quiet_end"
+    private const val KEY_PRE_SWITCH_WARNING_MS = "pre_switch_warning_ms"
     private const val KEY_LAUNCH_DELAY_MS = "launch_delay_ms"
     private const val KEY_RETRY_ENABLED = "retry_enabled"
     private const val KEY_RETRY_DELAY_MS = "retry_delay_ms"
@@ -38,11 +39,13 @@ object AppSettings {
     private const val KEY_LAST_PRE_SWITCH_WARNING_METHOD = "diag_last_pre_switch_warning_method"
     private const val KEY_LAST_PRE_SWITCH_WARNING_NUMBER = "diag_last_pre_switch_warning_number"
     private const val KEY_LAST_PRE_SWITCH_WARNING_RESULT = "diag_last_pre_switch_warning_result"
+    private const val KEY_LAST_PRE_SWITCH_WARNING_SKIP_REASON = "diag_last_pre_switch_warning_skip_reason"
 
     const val CHATGPT_PACKAGE = "com.openai.chatgpt"
     const val DEFAULT_COOLDOWN_SECONDS = 10
     const val DEFAULT_QUIET_START = "22:00"
     const val DEFAULT_QUIET_END = "07:00"
+    const val DEFAULT_PRE_SWITCH_WARNING_MS = 1000
     const val DEFAULT_LAUNCH_DELAY_MS = 300
     const val DEFAULT_RETRY_DELAY_MS = 700
     const val DEFAULT_ACCESSIBILITY_TIMEOUT_MS = 5000
@@ -75,10 +78,14 @@ object AppSettings {
     const val FALLBACK_PERMISSION_MISSING = "skipped: notification permission missing"
 
     const val PRE_SWITCH_WARNING_NOT_ATTEMPTED = "not attempted"
-    const val PRE_SWITCH_WARNING_SHOWN = "shown"
-    const val PRE_SWITCH_WARNING_CANCELLED_FOR_LAUNCH = "cancelled: launch starting"
-    const val PRE_SWITCH_WARNING_SKIPPED_IMMEDIATE = "skipped: immediate launch"
-    const val PRE_SWITCH_WARNING_PERMISSION_MISSING = "skipped: notification permission missing"
+    const val PRE_SWITCH_WARNING_STARTED = "전환 예고 시작"
+    const val PRE_SWITCH_WARNING_NUMBER_PREFIX = "전환 예고 숫자 표시"
+    const val PRE_SWITCH_WARNING_COMPLETED = "전환 예고 완료"
+    const val PRE_SWITCH_WARNING_LAUNCH_STARTING = "전환 예고 후 실행 시작"
+    const val PRE_SWITCH_WARNING_OFF = "전환 예고 꺼짐"
+    const val PRE_SWITCH_WARNING_ZERO_MS = "전환 예고 시간 0ms"
+    const val PRE_SWITCH_WARNING_PERMISSION_MISSING = "전환 예고 알림 권한 없음"
+    const val PRE_SWITCH_WARNING_BYPASSED = "오류: 전환 예고 우회됨"
     const val PRE_SWITCH_WARNING_FAILED = "failed: notification error"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -96,6 +103,9 @@ object AppSettings {
     fun setShowFallbackOnFailure(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_SHOW_FALLBACK_ON_FAILURE, value).apply()
 
     fun preSwitchWarningMode(): String = PRE_SWITCH_WARNING_MODE_COUNTDOWN_NOTIFICATION
+
+    fun preSwitchWarningMs(context: Context): Int = prefs(context).getInt(KEY_PRE_SWITCH_WARNING_MS, DEFAULT_PRE_SWITCH_WARNING_MS).coerceIn(0, 5000)
+    fun setPreSwitchWarningMs(context: Context, value: Int) = prefs(context).edit().putInt(KEY_PRE_SWITCH_WARNING_MS, value.coerceIn(0, 5000)).apply()
 
     fun cooldownSeconds(context: Context): Int = prefs(context).getInt(KEY_COOLDOWN_SECONDS, DEFAULT_COOLDOWN_SECONDS).coerceIn(1, 3600)
     fun setCooldownSeconds(context: Context, value: Int) = prefs(context).edit().putInt(KEY_COOLDOWN_SECONDS, value.coerceIn(1, 3600)).apply()
@@ -192,10 +202,18 @@ object AppSettings {
     }
 
     fun recordPreSwitchWarning(context: Context, number: String, result: String) {
+        val skipReason = when (result) {
+            PRE_SWITCH_WARNING_OFF,
+            PRE_SWITCH_WARNING_ZERO_MS,
+            PRE_SWITCH_WARNING_PERMISSION_MISSING,
+            PRE_SWITCH_WARNING_BYPASSED -> result
+            else -> "없음"
+        }
         prefs(context).edit()
             .putString(KEY_LAST_PRE_SWITCH_WARNING_METHOD, preSwitchWarningMode())
             .putString(KEY_LAST_PRE_SWITCH_WARNING_NUMBER, number)
             .putString(KEY_LAST_PRE_SWITCH_WARNING_RESULT, result)
+            .putString(KEY_LAST_PRE_SWITCH_WARNING_SKIP_REASON, skipReason)
             .apply()
     }
 
@@ -215,6 +233,7 @@ object AppSettings {
             .remove(KEY_LAST_PRE_SWITCH_WARNING_METHOD)
             .remove(KEY_LAST_PRE_SWITCH_WARNING_NUMBER)
             .remove(KEY_LAST_PRE_SWITCH_WARNING_RESULT)
+            .remove(KEY_LAST_PRE_SWITCH_WARNING_SKIP_REASON)
             .remove(KEY_PENDING_LAUNCH_MS)
             .apply()
     }
@@ -236,6 +255,7 @@ object AppSettings {
             lastPreSwitchWarningMethod = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_METHOD, preSwitchWarningMode()) ?: preSwitchWarningMode(),
             lastPreSwitchWarningNumber = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_NUMBER, "없음") ?: "없음",
             lastPreSwitchWarningResult = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_RESULT, PRE_SWITCH_WARNING_NOT_ATTEMPTED) ?: PRE_SWITCH_WARNING_NOT_ATTEMPTED,
+            lastPreSwitchWarningSkipReason = preferences.getString(KEY_LAST_PRE_SWITCH_WARNING_SKIP_REASON, "없음") ?: "없음",
         )
     }
 
@@ -245,6 +265,7 @@ object AppSettings {
             "무음 자동 실행 모드: ${onOff(silentAutoLaunch(context))}",
             "접근성 보조 모드: ${onOff(accessibilityAssist(context))}",
             "전환 예고 방식: ${preSwitchWarningMode()}",
+            "전환 예고 시간(ms): ${preSwitchWarningMs(context)}",
             "전환 예고 표시: 전환까지 남은 숫자만 표시",
             "실패 시 별도 알림 표시: ${onOff(showFallbackOnFailure(context))}",
             "화면 켜짐 상태에서만 실행: ${onOff(screenOnOnly(context))}",
@@ -284,10 +305,14 @@ object AppSettings {
             result == FALLBACK_SHOWN -> "별도 알림 표시됨"
             result == FALLBACK_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
             result == PRE_SWITCH_WARNING_NOT_ATTEMPTED -> "아직 없음"
-            result == PRE_SWITCH_WARNING_SHOWN -> "전환 예고 표시됨"
-            result == PRE_SWITCH_WARNING_CANCELLED_FOR_LAUNCH -> "실행 시작으로 예고 취소됨"
-            result == PRE_SWITCH_WARNING_SKIPPED_IMMEDIATE -> "건너뜀: 즉시 전환"
-            result == PRE_SWITCH_WARNING_PERMISSION_MISSING -> "건너뜀: 알림 권한 없음"
+            result == PRE_SWITCH_WARNING_STARTED -> PRE_SWITCH_WARNING_STARTED
+            result.startsWith(PRE_SWITCH_WARNING_NUMBER_PREFIX) -> result
+            result == PRE_SWITCH_WARNING_COMPLETED -> PRE_SWITCH_WARNING_COMPLETED
+            result == PRE_SWITCH_WARNING_LAUNCH_STARTING -> PRE_SWITCH_WARNING_LAUNCH_STARTING
+            result == PRE_SWITCH_WARNING_OFF -> PRE_SWITCH_WARNING_OFF
+            result == PRE_SWITCH_WARNING_ZERO_MS -> PRE_SWITCH_WARNING_ZERO_MS
+            result == PRE_SWITCH_WARNING_PERMISSION_MISSING -> PRE_SWITCH_WARNING_PERMISSION_MISSING
+            result == PRE_SWITCH_WARNING_BYPASSED -> PRE_SWITCH_WARNING_BYPASSED
             result == PRE_SWITCH_WARNING_FAILED -> "실패: 예고 알림 오류"
             else -> "실패: 예외 발생"
         }
@@ -332,5 +357,6 @@ object AppSettings {
         val lastPreSwitchWarningMethod: String,
         val lastPreSwitchWarningNumber: String,
         val lastPreSwitchWarningResult: String,
+        val lastPreSwitchWarningSkipReason: String,
     )
 }

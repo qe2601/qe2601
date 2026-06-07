@@ -30,32 +30,58 @@ object LaunchManager {
         false
     }
 
-    fun scheduleAutoLaunch(context: Context) {
+    fun schedulePreSwitchThenLaunch(context: Context) {
         val appContext = context.applicationContext
-        AppSettings.markPendingLaunch(appContext)
         AppSettings.recordFallbackResult(appContext, AppSettings.FALLBACK_DISABLED)
-        schedulePreSwitchCountdown(appContext, AppSettings.launchDelayMs(appContext))
-        if (!AppSettings.accessibilityAssist(appContext)) {
-            AppSettings.recordAccessibilityResult(appContext, AppSettings.ACCESSIBILITY_DISABLED)
+        val warningMs = AppSettings.preSwitchWarningMs(appContext)
+        val mode = AppSettings.preSwitchWarningMode()
+
+        if (mode == AppSettings.PRE_SWITCH_WARNING_MODE_COUNTDOWN_NOTIFICATION && warningMs > 0) {
+            AppSettings.recordPreSwitchWarning(appContext, "없음", AppSettings.PRE_SWITCH_WARNING_STARTED)
+            val warningResult = schedulePreSwitchCountdown(appContext, warningMs)
+            handler.postDelayed({
+                AppSettings.recordPreSwitchWarning(appContext, lastPreSwitchWarningNumber, AppSettings.PRE_SWITCH_WARNING_COMPLETED)
+                startLaunchFlowAfterPreSwitch(appContext)
+            }, warningMs.toLong())
+            if (warningResult == AppSettings.PRE_SWITCH_WARNING_PERMISSION_MISSING) {
+                return
+            }
+            return
+        }
+
+        lastPreSwitchWarningNumber = "없음"
+        val skippedResult = if (warningMs <= 0) {
+            AppSettings.PRE_SWITCH_WARNING_ZERO_MS
+        } else {
+            AppSettings.PRE_SWITCH_WARNING_OFF
+        }
+        AppSettings.recordPreSwitchWarning(appContext, lastPreSwitchWarningNumber, skippedResult)
+        startLaunchFlowAfterPreSwitch(appContext)
+    }
+
+    private fun startLaunchFlowAfterPreSwitch(context: Context) {
+        cancelPreSwitchWarning(context)
+        AppSettings.recordPreSwitchWarning(context, lastPreSwitchWarningNumber, AppSettings.PRE_SWITCH_WARNING_LAUNCH_STARTING)
+        AppSettings.setLastLaunchMs(context, System.currentTimeMillis())
+        AppSettings.markPendingLaunch(context)
+        if (!AppSettings.accessibilityAssist(context)) {
+            AppSettings.recordAccessibilityResult(context, AppSettings.ACCESSIBILITY_DISABLED)
         }
         handler.postDelayed({
-            if (AppSettings.launchDelayMs(appContext) > 0) {
-                cancelPreSwitchWarning(appContext)
-            }
-            val result = attemptLaunch(appContext)
-            AppSettings.recordLaunchResult(appContext, result)
-            if (AppSettings.retryEnabled(appContext)) {
+            val result = attemptLaunch(context)
+            AppSettings.recordLaunchResult(context, result)
+            if (AppSettings.retryEnabled(context)) {
                 handler.postDelayed({
-                    val retryResult = attemptLaunch(appContext)
-                    AppSettings.recordRetryResult(appContext, retryResult)
+                    val retryResult = attemptLaunch(context)
+                    AppSettings.recordRetryResult(context, retryResult)
                     if (result != AppSettings.RESULT_ATTEMPTED && retryResult != AppSettings.RESULT_ATTEMPTED) {
-                        maybeShowFallback(appContext)
+                        maybeShowFallback(context)
                     }
-                }, AppSettings.retryDelayMs(appContext).toLong())
+                }, AppSettings.retryDelayMs(context).toLong())
             } else if (result != AppSettings.RESULT_ATTEMPTED) {
-                maybeShowFallback(appContext)
+                maybeShowFallback(context)
             }
-        }, AppSettings.launchDelayMs(appContext).toLong())
+        }, AppSettings.launchDelayMs(context).toLong())
     }
 
     fun attemptLaunch(context: Context): String {
@@ -121,39 +147,35 @@ object LaunchManager {
         }
     }
 
-    private fun schedulePreSwitchCountdown(context: Context, launchDelayMs: Int) {
+    private fun schedulePreSwitchCountdown(context: Context, warningMs: Int): String {
         preSwitchWarningNotificationShown = false
-        if (launchDelayMs <= 0) {
-            lastPreSwitchWarningNumber = "없음"
-            AppSettings.recordPreSwitchWarning(context, lastPreSwitchWarningNumber, AppSettings.PRE_SWITCH_WARNING_SKIPPED_IMMEDIATE)
-            return
-        }
+        lastPreSwitchWarningNumber = countdownNumber(warningMs)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            lastPreSwitchWarningNumber = countdownNumber(launchDelayMs)
             AppSettings.recordPreSwitchWarning(context, lastPreSwitchWarningNumber, AppSettings.PRE_SWITCH_WARNING_PERMISSION_MISSING)
-            return
+            return AppSettings.PRE_SWITCH_WARNING_PERMISSION_MISSING
         }
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         ensurePreSwitchWarningChannel(notificationManager)
-        for ((delay, number) in countdownTicks(launchDelayMs)) {
-            handler.postDelayed({ showPreSwitchWarningNumber(context, notificationManager, number, launchDelayMs) }, delay)
+        for ((delay, number) in countdownTicks(warningMs)) {
+            handler.postDelayed({ showPreSwitchWarningNumber(context, notificationManager, number, warningMs) }, delay)
         }
+        return AppSettings.PRE_SWITCH_WARNING_STARTED
     }
 
     private fun showPreSwitchWarningNumber(
         context: Context,
         notificationManager: NotificationManager,
         number: String,
-        launchDelayMs: Int,
+        warningMs: Int,
     ) {
         val notification = Notification.Builder(context, PRE_SWITCH_WARNING_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(PRE_SWITCH_WARNING_TITLE)
             .setContentText(number)
             .setAutoCancel(true)
-            .setTimeoutAfter(launchDelayMs.toLong())
+            .setTimeoutAfter(warningMs.toLong())
             .setPriority(Notification.PRIORITY_HIGH)
             .setCategory(Notification.CATEGORY_STATUS)
             .build()
@@ -162,39 +184,33 @@ object LaunchManager {
             notificationManager.notify(PRE_SWITCH_WARNING_NOTIFICATION_ID, notification)
             lastPreSwitchWarningNumber = number
             preSwitchWarningNotificationShown = true
-            AppSettings.recordPreSwitchWarning(context, number, AppSettings.PRE_SWITCH_WARNING_SHOWN)
+            AppSettings.recordPreSwitchWarning(context, number, "${AppSettings.PRE_SWITCH_WARNING_NUMBER_PREFIX}: $number")
         } catch (_: RuntimeException) {
             AppSettings.recordPreSwitchWarning(context, number, AppSettings.PRE_SWITCH_WARNING_FAILED)
         }
     }
 
     private fun cancelPreSwitchWarning(context: Context) {
-        if (!preSwitchWarningNotificationShown) return
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         notificationManager.cancel(PRE_SWITCH_WARNING_NOTIFICATION_ID)
         preSwitchWarningNotificationShown = false
-        AppSettings.recordPreSwitchWarning(
-            context,
-            lastPreSwitchWarningNumber,
-            AppSettings.PRE_SWITCH_WARNING_CANCELLED_FOR_LAUNCH,
-        )
     }
 
-    private fun countdownTicks(launchDelayMs: Int): List<Pair<Long, String>> {
-        val firstNumber = countdownNumber(launchDelayMs)
-        if (launchDelayMs < 1000) return listOf(0L to firstNumber)
-        val seconds = ceil(launchDelayMs / 1000.0).toInt()
-        return (seconds downTo 1).map { second ->
-            val delay = (launchDelayMs - second * 1000L).coerceAtLeast(0L)
-            delay to second.toString()
+    private fun countdownTicks(warningMs: Int): List<Pair<Long, String>> {
+        if (warningMs <= 1000) return listOf(0L to countdownNumber(warningMs))
+        val tickCount = ceil(warningMs / 500.0).toInt()
+        return (tickCount downTo 2).map { tick ->
+            val remainingMs = tick * 500
+            val delay = (warningMs - remainingMs.toLong()).coerceAtLeast(0L)
+            delay to countdownNumber(remainingMs)
         }.distinctBy { it.second }
     }
 
-    private fun countdownNumber(launchDelayMs: Int): String {
-        return if (launchDelayMs < 1000) {
-            "0.5"
+    private fun countdownNumber(remainingMs: Int): String {
+        return if (remainingMs % 1000 == 0) {
+            (remainingMs / 1000).toString()
         } else {
-            ceil(launchDelayMs / 1000.0).toInt().toString()
+            String.format(java.util.Locale.US, "%.1f", remainingMs / 1000.0)
         }
     }
 

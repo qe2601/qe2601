@@ -38,8 +38,7 @@ class ChatGptNotificationListenerService : NotificationListenerService() {
             return
         }
 
-        AppSettings.setLastLaunchMs(this, now)
-        LaunchManager.scheduleAutoLaunch(this)
+        LaunchManager.schedulePreSwitchThenLaunch(this)
     }
 
     private fun isScreenOn(): Boolean {
