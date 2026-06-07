@@ -2,6 +2,7 @@ package com.example.gptalertlauncher
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -24,6 +25,7 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var statusContainer: LinearLayout
+    private lateinit var accessibilitySetupContainer: LinearLayout
     private lateinit var diagnosticsContainer: LinearLayout
     private lateinit var settingsSummaryContainer: LinearLayout
     private lateinit var cooldownEdit: EditText
@@ -80,6 +82,8 @@ class MainActivity : Activity() {
             AppSettings.recordAccessibilityResult(this, if (checked) AppSettings.ACCESSIBILITY_SKIPPED_NO_PENDING else AppSettings.ACCESSIBILITY_DISABLED)
             refreshAll()
         })
+        accessibilitySetupContainer = verticalContainer()
+        root.addView(accessibilitySetupContainer)
 
         root.addView(section("자동 실행 세부 설정"))
         root.addView(switchRow("화면 켜짐 상태에서만 실행", AppSettings.screenOnOnly(this)) { _, checked ->
@@ -138,7 +142,7 @@ class MainActivity : Activity() {
 
         root.addView(section("권한/설정 바로가기"))
         root.addView(button("알림 접근 권한 설정 열기") { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) })
-        root.addView(button("접근성 설정 열기") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+        root.addView(button("접근성 설정 열기") { openAccessibilityAssistSettings() })
         root.addView(button("이 앱 알림 설정 열기") { openOwnNotificationSettings() })
         root.addView(button("배터리 최적화 설정 열기") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) })
         root.addView(button("ChatGPT 앱 정보 열기") { openChatGptAppInfo() })
@@ -158,21 +162,59 @@ class MainActivity : Activity() {
     }
 
     private fun refreshAll() {
-        refreshStatus()
-        refreshDiagnostics()
+        val accessibilityEnabled = isAccessibilityAssistServiceEnabled(this)
+        AppSettings.recordAccessibilityPermissionStatus(this, accessibilityEnabled)
+        refreshStatus(accessibilityEnabled)
+        refreshAccessibilitySetup(accessibilityEnabled)
+        refreshDiagnostics(accessibilityEnabled)
         refreshSettingsSummary()
     }
 
-    private fun refreshStatus() {
+    private fun refreshStatus(accessibilityEnabled: Boolean) {
         statusContainer.removeAllViews()
         statusContainer.addView(statusLine("ChatGPT 설치됨", LaunchManager.isChatGptInstalled(this)))
         statusContainer.addView(statusLine("알림 접근 권한 허용됨", isNotificationListenerEnabled()))
-        statusContainer.addView(statusLine("접근성 보조 권한 허용됨", isAccessibilityServiceEnabled()))
+        statusContainer.addView(statusLine("접근성 보조 권한 허용됨", accessibilityEnabled))
         statusContainer.addView(statusLine("알림 표시 권한 허용됨", hasPostNotificationPermission()))
         statusContainer.addView(statusLine("배터리 최적화 제외됨", isIgnoringBatteryOptimizations()))
+        statusContainer.addView(firstRunAccessibilityCard(accessibilityEnabled))
     }
 
-    private fun refreshDiagnostics() {
+    private fun refreshAccessibilitySetup(accessibilityEnabled: Boolean) {
+        accessibilitySetupContainer.removeAllViews()
+        accessibilitySetupContainer.addView(body("접근성 보조 권한: ${onOff(accessibilityEnabled)}"))
+        accessibilitySetupContainer.addView(body("앱 내 접근성 보조 모드: ${onOff(AppSettings.accessibilityAssist(this))}"))
+        accessibilitySetupContainer.addView(body(if (accessibilityEnabled) "접근성 보조가 켜져 있습니다." else "접근성 보조가 꺼져 있습니다."))
+        accessibilitySetupContainer.addView(body("접근성 보조를 켜려면 Android 설정 화면에서 ‘GPT 알림 접근성 보조’를 선택한 뒤 사용 중으로 바꿔 주세요."))
+        accessibilitySetupContainer.addView(body("Samsung One UI에서는 접근성 > 설치된 앱 > GPT 알림 접근성 보조에서 켤 수 있습니다."))
+        accessibilitySetupContainer.addView(button("접근성 보조 설정 열기") { openAccessibilityAssistSettings() })
+        accessibilitySetupContainer.addView(button("접근성 보조 상태 다시 확인") { refreshAll() })
+        accessibilitySetupContainer.addView(button("접근성 보조 사용 방법 보기") { showAccessibilityAssistGuide() })
+    }
+
+    private fun firstRunAccessibilityCard(accessibilityEnabled: Boolean): View {
+        val notificationEnabled = isNotificationListenerEnabled()
+        val inAppAssist = AppSettings.accessibilityAssist(this)
+        val card = verticalContainer().apply { setPadding(0, 12, 0, 12) }
+        when {
+            notificationEnabled && !accessibilityEnabled -> {
+                card.addView(body("자동 전환 성공률을 높이려면 접근성 보조를 켜세요."))
+                card.addView(button("접근성 보조 설정 열기") { openAccessibilityAssistSettings() })
+            }
+            accessibilityEnabled && !inAppAssist -> {
+                card.addView(body("Android 접근성 권한은 켜져 있지만 앱 내 접근성 보조 모드가 꺼져 있습니다."))
+                card.addView(button("앱 내 접근성 보조 모드 켜기") {
+                    AppSettings.setAccessibilityAssist(this, true)
+                    AppSettings.recordAccessibilityResult(this, AppSettings.ACCESSIBILITY_SKIPPED_NO_PENDING)
+                    refreshAll()
+                })
+            }
+            accessibilityEnabled && inAppAssist -> card.addView(body("접근성 보조 준비 완료"))
+        }
+        return card
+    }
+
+    private fun refreshDiagnostics(accessibilityEnabled: Boolean) {
         val snapshot = AppSettings.diagnosticsSnapshot(this)
         diagnosticsContainer.removeAllViews()
         diagnosticsContainer.addView(body("마지막 ChatGPT 알림 감지: ${snapshot.lastDetected}"))
@@ -182,11 +224,14 @@ class MainActivity : Activity() {
         diagnosticsContainer.addView(body("마지막 재시도 결과: ${AppSettings.koreanResult(snapshot.lastRetryResult)}"))
         diagnosticsContainer.addView(body("마지막 접근성 보조 시도: ${snapshot.lastAccessibilityAttempt}"))
         diagnosticsContainer.addView(body("마지막 접근성 보조 결과: ${AppSettings.koreanResult(snapshot.lastAccessibilityResult)}"))
+        diagnosticsContainer.addView(body("접근성 권한 상태: ${AppSettings.koreanResult(snapshot.accessibilityPermissionStatus)}"))
+        diagnosticsContainer.addView(body("접근성 설정 화면 열기 결과: ${AppSettings.koreanResult(snapshot.accessibilitySettingsOpenResult)}"))
+        diagnosticsContainer.addView(body("마지막 접근성 상태 확인 시간: ${snapshot.lastAccessibilityStatusCheck}"))
         diagnosticsContainer.addView(body("마지막 별도 알림 결과: ${AppSettings.koreanResult(snapshot.lastFallbackResult)}"))
         diagnosticsContainer.addView(body("마지막 전환 예고 방식: ${snapshot.lastPreSwitchWarningMethod}"))
         diagnosticsContainer.addView(body("마지막 전환 예고 숫자: ${snapshot.lastPreSwitchWarningNumber}"))
         diagnosticsContainer.addView(body("마지막 전환 예고 결과: ${AppSettings.koreanResult(snapshot.lastPreSwitchWarningResult)}"))
-        diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 접근성 보조 ${yesNo(isAccessibilityServiceEnabled())}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
+        diagnosticsContainer.addView(body("현재 권한 상태: 알림 접근 ${yesNo(isNotificationListenerEnabled())}, 접근성 보조 ${yesNo(accessibilityEnabled)}, 알림 표시 ${yesNo(hasPostNotificationPermission())}"))
     }
 
     private fun refreshSettingsSummary() {
@@ -276,12 +321,6 @@ class MainActivity : Activity() {
         return enabled.split(':').any { it.contains(packageName) }
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(this, GptAccessibilityAssistService::class.java).flattenToString()
-        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
-    }
-
     private fun hasPostNotificationPermission(): Boolean {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -290,6 +329,40 @@ class MainActivity : Activity() {
     private fun isIgnoringBatteryOptimizations(): Boolean {
         val powerManager = getSystemService(PowerManager::class.java)
         return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun openAccessibilityAssistSettings() {
+        val directIntent = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+            putExtra("android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME", ComponentName(this@MainActivity, GptAccessibilityAssistService::class.java).flattenToString())
+        }
+        val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        val opened = openFirstAvailableSettings(listOf(directIntent, fallbackIntent))
+        val result = if (opened) AppSettings.ACCESSIBILITY_SETTINGS_OPENED else AppSettings.ACCESSIBILITY_SETTINGS_OPEN_FAILED
+        AppSettings.recordAccessibilitySettingsOpenResult(this, result)
+        if (!opened) {
+            Toast.makeText(this, "접근성 설정을 열 수 없습니다. Android 설정에서 접근성 > 설치된 앱을 확인하세요.", Toast.LENGTH_LONG).show()
+        }
+        refreshAll()
+    }
+
+    private fun openFirstAvailableSettings(intents: List<Intent>): Boolean {
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                return true
+            } catch (_: RuntimeException) {
+                // Try the next safe settings shortcut.
+            }
+        }
+        return false
+    }
+
+    private fun showAccessibilityAssistGuide() {
+        AlertDialog.Builder(this)
+            .setTitle("접근성 보조 사용 방법")
+            .setMessage("접근성 보조를 켜려면 Android 설정 화면에서 ‘GPT 알림 접근성 보조’를 선택한 뒤 사용 중으로 바꿔 주세요.\n\nSamsung One UI에서는 접근성 > 설치된 앱 > GPT 알림 접근성 보조에서 켤 수 있습니다.")
+            .setPositiveButton("확인", null)
+            .show()
     }
 
     private fun openOwnNotificationSettings() {
@@ -312,4 +385,5 @@ class MainActivity : Activity() {
     }
 
     private fun yesNo(value: Boolean): String = if (value) "허용됨" else "필요"
+    private fun onOff(value: Boolean): String = if (value) "켜짐" else "꺼짐"
 }
